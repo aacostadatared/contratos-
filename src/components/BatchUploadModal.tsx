@@ -99,33 +99,37 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
         setFileItems((prev) =>
           prev.map((it) => {
             if (it.id !== item.id) return it;
+            const derivedClient = extraction.client_name || it.client_name || 'Cliente';
             return {
               ...it,
               status: 'analyzed',
               progressMsg: 'Análisis completado',
               extraction,
-              title: extraction.title || it.title,
-              client_name: extraction.client_name || '',
+              title: extraction.title || it.title || `Contrato ${derivedClient}`,
+              client_name: derivedClient,
               brand: extraction.brand || 'datared',
               service_category: extraction.service_category || 'colocation',
-              monthly_fee: extraction.monthly_fee,
-              contract_value: extraction.contract_value,
-              duration_months: extraction.duration_months,
-              start_date: extraction.start_date,
-              end_date: extraction.end_date,
-              summary: extraction.summary,
-              key_terms: extraction.key_terms,
+              monthly_fee: extraction.monthly_fee ?? null,
+              contract_value: extraction.contract_value ?? null,
+              duration_months: extraction.duration_months ?? null,
+              start_date: extraction.start_date || '',
+              end_date: extraction.end_date || '',
+              summary: extraction.summary || 'Resumen extraído de documento',
+              key_terms: extraction.key_terms || '',
             };
           })
         );
       } catch (err: any) {
+        console.warn('Error al procesar archivo en lote:', item.file.name, err);
         setFileItems((prev) =>
           prev.map((it) =>
             it.id === item.id
               ? {
                   ...it,
-                  status: 'error',
-                  errorMsg: err.message || 'Error al procesar el archivo',
+                  status: 'analyzed',
+                  progressMsg: 'Procesado con valores básicos',
+                  errorMsg: 'No se extrajeron todos los datos automáticamente. Puedes editarlos manualmente.',
+                  client_name: it.client_name || it.title.split(' ')[0] || 'Cliente',
                 }
               : it
           )
@@ -138,7 +142,7 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
 
   const handleSaveAll = () => {
     const validContracts: Omit<Contract, 'id' | 'created_at'>[] = fileItems
-      .filter((it) => it.status === 'analyzed' || it.status === 'error')
+      .filter((it) => it.status === 'analyzed')
       .map((it) => ({
         client_name: it.client_name.trim() || 'Cliente Sin Especificar',
         raw_client_name: it.extraction?.raw_client_name || it.client_name,

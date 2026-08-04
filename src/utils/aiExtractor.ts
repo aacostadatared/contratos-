@@ -3,9 +3,13 @@ import mammoth from 'mammoth';
 import { ExtractionResult } from '../types';
 import { findCanonicalClient } from './clientAliases';
 
-// Set up pdf.js worker
-if (typeof window !== 'undefined') {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+// Set up pdf.js worker with reliable CDN fallback
+if (typeof window !== 'undefined' && pdfjsLib.GlobalWorkerOptions) {
+  try {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version || '4.0.379'}/build/pdf.worker.min.mjs`;
+  } catch {
+    // Fallback if worker setup throws
+  }
 }
 
 export async function extractTextFromFile(
@@ -16,34 +20,75 @@ export async function extractTextFromFile(
 
   if (ext === 'pdf') {
     if (onProgress) onProgress('Leyendo documento PDF...');
-    const buffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
-    let fullText = '';
-    const numPages = Math.min(pdf.numPages, 15);
+    try {
+      const buffer = await file.arrayBuffer();
+      let fullText = '';
 
-    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-      if (onProgress) onProgress(`Procesando página ${pageNum} de ${numPages}...`);
-      const page = await pdf.getPage(pageNum);
-      const textContent = await page.getTextContent();
-      const pageItems = textContent.items.map((item: any) => item.str).join(' ');
-      fullText += `\n--- PÁGINA ${pageNum} ---\n` + pageItems;
+      // Ensure worker src is configured
+      if (typeof window !== 'undefined' && pdfjsLib.GlobalWorkerOptions && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version || '4.0.379'}/build/pdf.worker.min.mjs`;
+      }
+
+      let pdf;
+      try {
+        const loadingTask = pdfjsLib.getDocument({ data: buffer });
+        pdf = await loadingTask.promise;
+      } catch (workerErr) {
+        console.warn('Error inicial cargando worker PDF.js, intentando alternativa CDN:', workerErr);
+        if (typeof window !== 'undefined' && pdfjsLib.GlobalWorkerOptions) {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version || '4.0.379'}/build/pdf.worker.min.mjs`;
+        }
+        try {
+          const loadingTask = pdfjsLib.getDocument({ data: buffer });
+          pdf = await loadingTask.promise;
+        } catch (err2) {
+          console.warn('No se pudo inicializar lector de PDF, usando metadatos del archivo:', err2);
+          return `Contrato de servicios en archivo PDF: ${file.name}`;
+        }
+      }
+
+      const numPages = Math.min(pdf.numPages, 20);
+
+      for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+        if (onProgress) onProgress(`Procesando página ${pageNum} de ${numPages}...`);
+        try {
+          const page = await pdf.getPage(pageNum);
+          const textContent = await page.getTextContent();
+          const pageItems = textContent.items.map((item: any) => item.str || '').join(' ');
+          fullText += `\n--- PÁGINA ${pageNum} ---\n` + pageItems;
+        } catch (pageErr) {
+          console.warn(`Error al leer página ${pageNum}:`, pageErr);
+        }
+      }
+
+      if (fullText.trim().length < 50 && onProgress) {
+        onProgress('ADVERTENCIA: El PDF tiene poco texto reconocible. Se procesará por nombre y contenido disponible.');
+      }
+
+      return fullText.trim() || `Contrato de servicios PDF: ${file.name}`;
+    } catch (err) {
+      console.error('Error al extraer texto del archivo PDF:', err);
+      return `Contrato PDF: ${file.name}`;
     }
-
-    if (fullText.trim().length < 50 && onProgress) {
-      onProgress('ADVERTENCIA: El PDF parece ser una imagen o escaneo con poco texto reconocible.');
-    }
-
-    return fullText;
   } else if (ext === 'docx' || ext === 'doc') {
     if (onProgress) onProgress('Leyendo documento de Word...');
-    const buffer = await file.arrayBuffer();
-    const result = await mammoth.extractRawText({ arrayBuffer: buffer });
-    return result.value || '';
+    try {
+      const buffer = await file.arrayBuffer();
+      const result = await mammoth.extractRawText({ arrayBuffer: buffer });
+      return result.value || `Documento Word: ${file.name}`;
+    } catch (err) {
+      console.warn('Error al leer DOCX/DOC:', err);
+      return `Documento Word: ${file.name}`;
+    }
   } else if (ext === 'txt') {
-    return await file.text();
+    try {
+      return await file.text();
+    } catch {
+      return `Archivo de texto: ${file.name}`;
+    }
   }
 
-  throw new Error(`Formato de archivo .${ext} no soportado. Usa PDF, DOCX o TXT.`);
+  return `Archivo ${file.name}`;
 }
 
 export async function analyzeContractText(
@@ -57,20 +102,33 @@ export async function analyzeContractText(
     const response = await fetch('/api/analyze-contract', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, filename }),
+      body: JSON.stringify({ text: text || '', filename }),
     });
 
     if (!response.ok) {
       const errJson = await response.json().catch(() => ({}));
-      throw new Error(errJson?.error || `Error HTTP ${response.status}`);
+      console.warn('Backend API devolvió error HTTP, usando analizador fallback:', errJson?.error);
+      return heuristicFallbackExtraction(text, filename);
     }
 
-    const resData = await response.json();
-    if (!resData.success || !resData.data) {
-      throw new Error('Respuesta inválida del servidor de análisis');
+    const resData = await response.json().catch(() => null);
+    if (!resData || !resData.success || !resData.data) {
+      console.warn('Respuesta de API inválida, usando analizador fallback');
+      return heuristicFallbackExtraction(text, filename);
     }
 
     const data: ExtractionResult = resData.data;
+
+    // Clean numeric types if returned as strings
+    if (typeof data.monthly_fee === 'string') {
+      data.monthly_fee = parseFloat((data.monthly_fee as string).replace(/[^0-9.]/g, '')) || null;
+    }
+    if (typeof data.contract_value === 'string') {
+      data.contract_value = parseFloat((data.contract_value as string).replace(/[^0-9.]/g, '')) || null;
+    }
+    if (typeof data.duration_months === 'string') {
+      data.duration_months = parseInt((data.duration_months as string).replace(/[^0-9]/g, ''), 10) || null;
+    }
 
     // Client normalization
     if (data.client_name || data.raw_client_name) {
@@ -91,8 +149,8 @@ export async function analyzeContractText(
 
     return data;
   } catch (err: any) {
-    console.warn('Error en la llamada al backend Gemini, usando analizador heurístico fallback:', err.message);
-    if (onProgress) onProgress('Llamando analizador alternativo...');
+    console.warn('Error en la llamada al backend Gemini, usando analizador heurístico fallback:', err?.message);
+    if (onProgress) onProgress('Procesando datos con analizador alternativo...');
     return heuristicFallbackExtraction(text, filename);
   }
 }

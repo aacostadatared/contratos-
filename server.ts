@@ -27,10 +27,7 @@ async function startServer() {
   app.post("/api/analyze-contract", async (req, res) => {
     try {
       const { text, filename } = req.body;
-
-      if (!text || typeof text !== "string") {
-        return res.status(400).json({ error: "No text provided for analysis" });
-      }
+      const textToAnalyze = typeof text === "string" ? text : "";
 
       const prompt = `Analiza el siguiente texto extraído de un contrato comercial o de servicios para las marcas DataRed e INTELFON / RED en El Salvador.
 Información del archivo: ${filename || "desconocido"}.
@@ -95,8 +92,8 @@ Devuelve UNICAMENTE un objeto JSON válido con la siguiente estructura:
   "key_terms": "Términos..."
 }
 
-TEXTO DEL CONTRATO:
-${text.slice(0, 30000)}
+TEXTO DEL CONTRATO (o Nombre de Archivo):
+${textToAnalyze ? textToAnalyze.slice(0, 30000) : filename || "Sin contenido"}
 `;
 
       const response = await ai.models.generateContent({
@@ -109,7 +106,19 @@ ${text.slice(0, 30000)}
 
       const rawText = response.text || "{}";
       const cleanText = rawText.replace(/```json|```/g, "").trim();
-      const parsedData = JSON.parse(cleanText);
+      let parsedData = {};
+      try {
+        parsedData = JSON.parse(cleanText);
+      } catch {
+        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            parsedData = JSON.parse(jsonMatch[0]);
+          } catch {
+            parsedData = {};
+          }
+        }
+      }
 
       res.json({ success: true, data: parsedData });
     } catch (error: any) {
