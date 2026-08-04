@@ -286,19 +286,80 @@ const MONTH_MAP: Record<string, string> = {
   septiembre: '09', octubre: '10', noviembre: '11', diciembre: '12'
 };
 
+const SPANISH_WRITTEN_YEARS: Record<string, string> = {
+  'dos mil veintiuno': '2021',
+  'dos mil veintidos': '2022',
+  'dos mil veintidós': '2022',
+  'dos mil veintitres': '2023',
+  'dos mil veintitrés': '2023',
+  'dos mil veinticuatro': '2024',
+  'dos mil veinticinco': '2025',
+  'dos mil veintiseis': '2026',
+  'dos mil veintiséis': '2026',
+  'dos mil veintisiete': '2027',
+  'dos mil veintiocho': '2028',
+  'dos mil veintinueve': '2029',
+  'dos mil treinta': '2030',
+  'dos mil veinte': '2020',
+  'dos mil diecinueve': '2019',
+};
+
+const SPANISH_WRITTEN_DAYS: Record<string, string> = {
+  'uno': '01', 'primero': '01', 'dos': '02', 'tres': '03', 'cuatro': '04', 'cinco': '05',
+  'seis': '06', 'siete': '07', 'ocho': '08', 'nueve': '09', 'diez': '10',
+  'once': '11', 'doce': '12', 'trece': '13', 'catorce': '14', 'quince': '15',
+  'dieciseis': '16', 'dieciséis': '16', 'diecisiete': '17', 'dieciocho': '18', 'diecinueve': '19',
+  'veinte': '20', 'veintiuno': '21', 'veintidos': '22', 'veintidós': '22',
+  'veintitres': '23', 'veintitrés': '23', 'veinticuatro': '24', 'veinticinco': '25',
+  'veintiseis': '26', 'veintiséis': '26', 'veintisiete': '27', 'veintiocho': '28',
+  'veintinueve': '29', 'treinta': '30', 'treinta y uno': '31'
+};
+
 export function extractDatesFromText(text: string, filename: string = ''): { start_date: string | null; end_date: string | null } {
-  const combined = (text + ' ' + filename).toLowerCase();
-  
-  // Spanish date pattern: "11 de febrero de 2021" or "11 de febrero del 2021"
-  const spanishDateRegex = /(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de[l\s]+(\d{4})/gi;
-  const matches = [...combined.matchAll(spanishDateRegex)];
+  const combined = (text + ' ' + filename).toLowerCase().replace(/\s+/g, ' ');
   const datesFound: string[] = [];
 
-  for (const match of matches) {
-    const day = match[1].padStart(2, '0');
+  // Pattern: "Del 01 de enero al 31 de diciembre de 2024"
+  const rangeRegex = /(?:del|desde el|periodo|plazo)?\s*(\d{1,2}|uno|primero|treinta y uno)\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(?:al|hasta el|hasta|a)?\s*(\d{1,2}|treinta y uno)\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de[l\s]+(\d{4}|dos mil \w+)/gi;
+
+  for (const match of combined.matchAll(rangeRegex)) {
+    let day1 = match[1];
+    if (SPANISH_WRITTEN_DAYS[day1]) day1 = SPANISH_WRITTEN_DAYS[day1];
+    day1 = day1.padStart(2, '0');
+
+    const m1 = MONTH_MAP[match[2].toLowerCase()] || '01';
+
+    let day2 = match[3];
+    if (SPANISH_WRITTEN_DAYS[day2]) day2 = SPANISH_WRITTEN_DAYS[day2];
+    day2 = day2.padStart(2, '0');
+
+    const m2 = MONTH_MAP[match[4].toLowerCase()] || '12';
+
+    let yr = match[5];
+    if (SPANISH_WRITTEN_YEARS[yr]) yr = SPANISH_WRITTEN_YEARS[yr];
+
+    if (/^\d{4}$/.test(yr)) {
+      datesFound.push(`${yr}-${m1}-${day1}`);
+      datesFound.push(`${yr}-${m2}-${day2}`);
+    }
+  }
+
+  // Standard Spanish date pattern: "11 de febrero de 2021" or "uno enero de dos mil veintiuno" or "treinta y uno de diciembre de dos mil veintiuno"
+  const spanishDateRegex = /(\d{1,2}|uno|primero|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|dieciséis|diecisiete|dieciocho|diecinueve|veinte|veintiuno|veintidos|veintidós|veintitres|veintitrés|veinticuatro|veinticinco|veintiseis|veintiséis|veintisiete|veintiocho|veintinueve|treinta|treinta y uno)\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(?:de[l\s]+|de\s+)(\d{4}|dos mil \w+)/gi;
+
+  for (const match of combined.matchAll(spanishDateRegex)) {
+    let dayStr = match[1];
+    if (SPANISH_WRITTEN_DAYS[dayStr]) dayStr = SPANISH_WRITTEN_DAYS[dayStr];
+    const day = dayStr.padStart(2, '0');
+
     const month = MONTH_MAP[match[2].toLowerCase()] || '01';
-    const year = match[3];
-    datesFound.push(`${year}-${month}-${day}`);
+
+    let yearStr = match[3];
+    if (SPANISH_WRITTEN_YEARS[yearStr]) yearStr = SPANISH_WRITTEN_YEARS[yearStr];
+
+    if (/^\d{4}$/.test(yearStr)) {
+      datesFound.push(`${yearStr}-${month}-${day}`);
+    }
   }
 
   // ISO pattern: 2021-02-11
@@ -314,10 +375,10 @@ export function extractDatesFromText(text: string, filename: string = ''): { sta
   }
 
   if (datesFound.length > 0) {
-    datesFound.sort();
+    const uniqueDates = Array.from(new Set(datesFound)).sort();
     return {
-      start_date: datesFound[0],
-      end_date: datesFound.length > 1 ? datesFound[datesFound.length - 1] : null,
+      start_date: uniqueDates[0],
+      end_date: uniqueDates.length > 1 ? uniqueDates[uniqueDates.length - 1] : null,
     };
   }
 
@@ -328,6 +389,14 @@ export function extractAmountsFromText(text: string): { monthly_fee: number | nu
   let monthly_fee: number | null = null;
   let contract_value: number | null = null;
 
+  // Total regex: "monto total de $13,440.00", "valor total (iva incluido) 16,724.00", "total usd $: 16,724.00"
+  const totalRegex = /(?:monto total|valor total|suma total|precio total|total usd|monto global)\s*(?:\(iva incluido\))?\s*(?:de)?\s*(?::)?\s*(?:USD)?\s*\$?\s*([\d,]+(?:\.\d{1,2})?)/gi;
+  const totalMatch = totalRegex.exec(text);
+  if (totalMatch && totalMatch[1]) {
+    const val = parseFloat(totalMatch[1].replace(/,/g, ''));
+    if (!isNaN(val) && val > 0) contract_value = val;
+  }
+
   // Monthly regex: "cuota de $250.00", "canon mensual $1,200", "$250 mensuales"
   const monthlyRegex = /(?:cuota|canon|pago|alquiler|monto|monto mensual|cuota mensual|precio|tarifa)\s*(?:mensual)?\s*(?:de)?\s*\$\s*([\d,]+(?:\.\d{1,2})?)/gi;
   const monthlyMatch = monthlyRegex.exec(text);
@@ -336,20 +405,12 @@ export function extractAmountsFromText(text: string): { monthly_fee: number | nu
     if (!isNaN(val) && val > 0) monthly_fee = val;
   }
 
-  // Total regex: "monto total de $4,500.00", "valor $4,500"
-  const totalRegex = /(?:monto total|valor total|suma total|precio total)\s*(?:de)?\s*\$\s*([\d,]+(?:\.\d{1,2})?)/gi;
-  const totalMatch = totalRegex.exec(text);
-  if (totalMatch && totalMatch[1]) {
-    const val = parseFloat(totalMatch[1].replace(/,/g, ''));
-    if (!isNaN(val) && val > 0) contract_value = val;
-  }
-
   // General Dollar regex fallback
-  const allDollarMatches = text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)/g);
+  const allDollarMatches = text.match(/(?:USD\s*\$|\$)\s*([\d,]+\.\d{2})/gi) || text.match(/([\d,]{2,}\.\d{2})/g);
   if (allDollarMatches && allDollarMatches.length > 0) {
     const nums = allDollarMatches
-      .map(s => parseFloat(s.replace('$', '').replace(/,/g, '').trim()))
-      .filter(n => !isNaN(n) && n > 0);
+      .map(s => parseFloat(s.replace(/USD|\$|,/gi, '').trim()))
+      .filter(n => !isNaN(n) && n > 10);
 
     if (nums.length > 0) {
       if (!contract_value) contract_value = Math.max(...nums);
