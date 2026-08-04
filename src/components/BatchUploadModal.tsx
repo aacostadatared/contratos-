@@ -124,11 +124,16 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
           );
         });
 
-        const extraction = await analyzeContractText(text, item.file.name, (msg) => {
-          setFileItems((prev) =>
-            prev.map((it) => (it.id === item.id ? { ...it, progressMsg: msg } : it))
-          );
-        });
+        const extraction = await analyzeContractText(
+          text,
+          item.file.name,
+          (msg) => {
+            setFileItems((prev) =>
+              prev.map((it) => (it.id === item.id ? { ...it, progressMsg: msg } : it))
+            );
+          },
+          item.file
+        );
 
         setFileItems((prev) =>
           prev.map((it) => {

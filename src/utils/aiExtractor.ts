@@ -91,18 +91,50 @@ export async function extractTextFromFile(
   return `Archivo ${file.name}`;
 }
 
+export async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const base64 = result.includes(',') ? result.split(',')[1] : result;
+      resolve(base64);
+    };
+    reader.onerror = (error) => reject(error);
+    reader.readAsDataURL(file);
+  });
+}
+
 export async function analyzeContractText(
   text: string,
   filename: string,
-  onProgress?: (msg: string) => void
+  onProgress?: (msg: string) => void,
+  file?: File
 ): Promise<ExtractionResult> {
-  if (onProgress) onProgress('Analizando cláusulas, plazos y montos con Gemini AI...');
+  if (onProgress) onProgress('Analizando documento, plazos y montos con IA visual Gemini...');
 
   try {
+    let fileBase64: string | undefined = undefined;
+    let mimeType: string | undefined = undefined;
+
+    if (file && file.size <= 25 * 1024 * 1024) {
+      try {
+        if (onProgress) onProgress('Procesando documento escaneado/digital con Gemini Vision OCR...');
+        fileBase64 = await fileToBase64(file);
+        mimeType = file.type || (filename.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream');
+      } catch (bErr) {
+        console.warn('Error convirtiendo archivo a base64:', bErr);
+      }
+    }
+
     const response = await fetch('/api/analyze-contract', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text || '', filename }),
+      body: JSON.stringify({
+        text: text || '',
+        filename,
+        fileBase64,
+        mimeType,
+      }),
     });
 
     if (!response.ok) {
