@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Contract, ExtractionResult } from '../types';
-import { extractTextFromFile, analyzeContractText } from '../utils/aiExtractor';
-import { Upload, FileText, CheckCircle2, AlertCircle, Sparkles, X, Loader2, Save, Trash2, Calendar, DollarSign, Building } from 'lucide-react';
+import { extractTextFromFile, analyzeContractText, calculateEndDate } from '../utils/aiExtractor';
+import { Upload, FileText, CheckCircle2, AlertCircle, Sparkles, X, Loader2, Save, Trash2, Calendar, DollarSign, Building, Users } from 'lucide-react';
 
 interface BatchUploadModalProps {
   isOpen: boolean;
@@ -37,9 +37,22 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
 }) => {
   const [fileItems, setFileItems] = useState<BatchFileItem[]>([]);
   const [isProcessingBatch, setIsProcessingBatch] = useState(false);
+  const [commonClientInput, setCommonClientInput] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
+
+  const handleApplyCommonClient = (clientToApply?: string) => {
+    const targetClient = (clientToApply || commonClientInput).trim();
+    if (!targetClient) return;
+
+    setFileItems((prev) =>
+      prev.map((it) => ({
+        ...it,
+        client_name: targetClient,
+      }))
+    );
+  };
 
   const handleFilesSelected = (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -69,6 +82,27 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
 
   const removeItem = (id: string) => {
     setFileItems((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const updateItemField = (id: string, updates: Partial<BatchFileItem>) => {
+    setFileItems((prev) =>
+      prev.map((it) => {
+        if (it.id !== id) return it;
+        const updated = { ...it, ...updates };
+
+        if (('monthly_fee' in updates || 'duration_months' in updates) && updated.monthly_fee && updated.duration_months) {
+          if (!('contract_value' in updates)) {
+            updated.contract_value = Math.round(updated.monthly_fee * updated.duration_months * 100) / 100;
+          }
+        }
+
+        if (('start_date' in updates || 'duration_months' in updates) && updated.start_date && updated.duration_months) {
+          updated.end_date = calculateEndDate(updated.start_date, updated.duration_months);
+        }
+
+        return updated;
+      })
+    );
   };
 
   // Start processing files in queue
@@ -136,6 +170,26 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
         );
       }
     }
+
+    // Auto cross-pollinate client name across the batch if uploading multiple contracts for the same client
+    setFileItems((prev) => {
+      const recognizedClient = prev.find(
+        (it) => it.client_name && !it.client_name.toLowerCase().includes('cliente')
+      )?.client_name;
+
+      if (!recognizedClient) return prev;
+
+      return prev.map((it) => {
+        if (!it.client_name || it.client_name.toLowerCase().includes('cliente')) {
+          return {
+            ...it,
+            client_name: recognizedClient,
+            title: it.title.startsWith('Contrato Cliente') ? `Contrato ${recognizedClient}` : it.title,
+          };
+        }
+        return it;
+      });
+    });
 
     setIsProcessingBatch(false);
   };
@@ -235,32 +289,66 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
             </p>
           </div>
 
-          {/* Controls Bar */}
+          {/* Controls Bar & Batch Unification */}
           {fileItems.length > 0 && (
-            <div className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200">
-              <div className="text-xs text-slate-700">
-                <strong>{fileItems.length}</strong> {fileItems.length === 1 ? 'archivo en cola' : 'archivos en cola'} ·{' '}
-                <span className="text-emerald-700 font-semibold">{analyzedCount} analizados</span>
+            <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="text-xs text-slate-700">
+                  <strong>{fileItems.length}</strong> {fileItems.length === 1 ? 'archivo en cola' : 'archivos en cola'} ·{' '}
+                  <span className="text-emerald-700 font-semibold">{analyzedCount} analizados</span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={processBatch}
+                    disabled={isProcessingBatch || fileItems.every((i) => i.status === 'analyzed')}
+                    className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs font-bold transition shadow-sm"
+                  >
+                    {isProcessingBatch ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        Procesando con IA...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5" />
+                        Analizar Lote
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              {/* Batch Client Unification Tool */}
+              <div className="pt-2 border-t border-slate-200/80 flex flex-wrap items-center gap-2 text-xs">
+                <div className="flex items-center gap-1.5 text-slate-700 font-semibold shrink-0">
+                  <Users className="w-4 h-4 text-indigo-600" />
+                  <span>Cliente único para este lote:</span>
+                </div>
+                <input
+                  type="text"
+                  value={commonClientInput}
+                  onChange={(e) => setCommonClientInput(e.target.value)}
+                  placeholder="Ej: BANCO DE DESARROLLO DE EL SALVADOR (BANDESAL)"
+                  className="flex-1 min-w-[200px] bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-slate-900 text-xs focus:border-indigo-500"
+                />
                 <button
-                  onClick={processBatch}
-                  disabled={isProcessingBatch || fileItems.every((i) => i.status === 'analyzed')}
-                  className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs font-bold transition shadow-sm"
+                  type="button"
+                  onClick={() => handleApplyCommonClient()}
+                  disabled={!commonClientInput.trim()}
+                  className="px-3 py-1 bg-indigo-50 hover:bg-indigo-100 disabled:bg-slate-100 text-indigo-700 disabled:text-slate-400 font-semibold rounded-lg border border-indigo-200 transition text-xs"
                 >
-                  {isProcessingBatch ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      Procesando con IA...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-3.5 h-3.5" />
-                      Analizar Lote
-                    </>
-                  )}
+                  Aplicar a todos
                 </button>
+                {fileItems.length > 1 && fileItems[0].client_name && (
+                  <button
+                    type="button"
+                    onClick={() => handleApplyCommonClient(fileItems[0].client_name)}
+                    className="px-2.5 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 font-medium rounded-lg transition text-xs"
+                  >
+                    Usar cliente del 1er doc ({fileItems[0].client_name})
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -330,11 +418,7 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
                     <input
                       type="text"
                       value={item.title}
-                      onChange={(e) =>
-                        setFileItems((prev) =>
-                          prev.map((it) => (it.id === item.id ? { ...it, title: e.target.value } : it))
-                        )
-                      }
+                      onChange={(e) => updateItemField(item.id, { title: e.target.value })}
                       className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-900 focus:border-indigo-500"
                     />
                   </div>
@@ -347,11 +431,7 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
                     <input
                       type="text"
                       value={item.client_name}
-                      onChange={(e) =>
-                        setFileItems((prev) =>
-                          prev.map((it) => (it.id === item.id ? { ...it, client_name: e.target.value } : it))
-                        )
-                      }
+                      onChange={(e) => updateItemField(item.id, { client_name: e.target.value })}
                       placeholder="Ej: Banco de Desarrollo de El Salvador (BANDESAL)"
                       className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-900 focus:border-indigo-500"
                     />
@@ -364,13 +444,7 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
                     </label>
                     <select
                       value={item.brand}
-                      onChange={(e) =>
-                        setFileItems((prev) =>
-                          prev.map((it) =>
-                            it.id === item.id ? { ...it, brand: e.target.value as 'datared' | 'red' } : it
-                          )
-                        )
-                      }
+                      onChange={(e) => updateItemField(item.id, { brand: e.target.value as 'datared' | 'red' })}
                       className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-900 focus:border-indigo-500"
                     >
                       <option value="datared">DataRed</option>
@@ -385,15 +459,7 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
                     </label>
                     <select
                       value={item.service_category}
-                      onChange={(e) =>
-                        setFileItems((prev) =>
-                          prev.map((it) =>
-                            it.id === item.id
-                              ? { ...it, service_category: e.target.value as any }
-                              : it
-                          )
-                        )
-                      }
+                      onChange={(e) => updateItemField(item.id, { service_category: e.target.value as any })}
                       className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-900 focus:border-indigo-500"
                     >
                       <option value="colocation">Colocation (Rack U's)</option>
@@ -411,15 +477,7 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
                     <input
                       type="number"
                       value={item.monthly_fee ?? ''}
-                      onChange={(e) =>
-                        setFileItems((prev) =>
-                          prev.map((it) =>
-                            it.id === item.id
-                              ? { ...it, monthly_fee: parseFloat(e.target.value) || null }
-                              : it
-                          )
-                        )
-                      }
+                      onChange={(e) => updateItemField(item.id, { monthly_fee: parseFloat(e.target.value) || null })}
                       placeholder="0.00"
                       className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-900 focus:border-indigo-500 font-mono"
                     />
@@ -433,15 +491,7 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
                     <input
                       type="number"
                       value={item.contract_value ?? ''}
-                      onChange={(e) =>
-                        setFileItems((prev) =>
-                          prev.map((it) =>
-                            it.id === item.id
-                              ? { ...it, contract_value: parseFloat(e.target.value) || null }
-                              : it
-                          )
-                        )
-                      }
+                      onChange={(e) => updateItemField(item.id, { contract_value: parseFloat(e.target.value) || null })}
                       placeholder="0.00"
                       className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-emerald-700 font-bold focus:border-indigo-500 font-mono"
                     />
@@ -455,13 +505,7 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
                     <input
                       type="date"
                       value={item.start_date || ''}
-                      onChange={(e) =>
-                        setFileItems((prev) =>
-                          prev.map((it) =>
-                            it.id === item.id ? { ...it, start_date: e.target.value } : it
-                          )
-                        )
-                      }
+                      onChange={(e) => updateItemField(item.id, { start_date: e.target.value })}
                       className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-900 focus:border-indigo-500"
                     />
                   </div>
@@ -474,11 +518,7 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
                     <input
                       type="date"
                       value={item.end_date || ''}
-                      onChange={(e) =>
-                        setFileItems((prev) =>
-                          prev.map((it) => (it.id === item.id ? { ...it, end_date: e.target.value } : it))
-                        )
-                      }
+                      onChange={(e) => updateItemField(item.id, { end_date: e.target.value })}
                       className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-900 focus:border-indigo-500"
                     />
                   </div>
@@ -491,15 +531,7 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
                     <input
                       type="number"
                       value={item.duration_months ?? ''}
-                      onChange={(e) =>
-                        setFileItems((prev) =>
-                          prev.map((it) =>
-                            it.id === item.id
-                              ? { ...it, duration_months: parseInt(e.target.value, 10) || null }
-                              : it
-                          )
-                        )
-                      }
+                      onChange={(e) => updateItemField(item.id, { duration_months: parseInt(e.target.value, 10) || null })}
                       placeholder="Ej: 18, 24, 12"
                       className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-900 focus:border-indigo-500"
                     />

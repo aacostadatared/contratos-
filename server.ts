@@ -32,43 +32,31 @@ async function startServer() {
       const prompt = `Analiza el siguiente texto extraído de un contrato comercial o de servicios para las marcas DataRed e INTELFON / RED en El Salvador.
 Información del archivo: ${filename || "desconocido"}.
 
-INSTRUCCIONES DE EXTRACCIÓN Y CÁLCULO:
+INSTRUCCIONES DE EXTRACCIÓN Y CÁLCULO CRÍTICAS:
 1. "client_name": Identifica el nombre legal o comercial del CLIENTE.
-   - Si el cliente aparece mencionado con variaciones como "Bandesal", "BANCO DE DESARROLLO DE LA REPÚBLICA DE EL SALVADOR" o "Banco de Desarrollo de El Salvador", normaliza el campo "canonical_client_name" a la versión institucional más reconocida (ej. "BANCO DE DESARROLLO DE LA REPÚBLICA DE EL SALVADOR (BANDESAL)").
-   - Indica en "raw_client_name" el texto exacto tal como aparece.
+   - Si no lo encuentras explícito en el texto, deduce del nombre del archivo ("${filename}").
+   - Si el cliente es "Bandesal", "BANCO DE DESARROLLO DE LA REPÚBLICA DE EL SALVADOR" o "Banco de Desarrollo", normalízalo a "BANCO DE DESARROLLO DE LA REPÚBLICA DE EL SALVADOR (BANDESAL)".
+   - Indica en "raw_client_name" la versión exacta encontrada.
 
-2. "brand":
-   - "datared": Si ofrece Arrendamiento de Servidor Virtual, Colocation, Data Center, Custodia de Cintas, Enlaces de Datos, Internet empresarial, Cloud.
-   - "red": Si ofrece servicios de Radiocomunicación Trunking, PTT, terminales de radio, GPS, flota.
+2. "monthly_fee" y "contract_value":
+   - "monthly_fee": Busca cualquier cifra en dólares ($) asociada a "cuota", "monto mensual", "canon", "pago mensual", "precio mensual", "alquiler". Ej: $250.00, $1,200.00, etc.
+   - "contract_value": MONTO TOTAL. Si la cuota es $250 y el plazo es 18 meses, el valor es 250 * 18 = 4500. Si dice "por un valor total de $4,500.00", ese es el contract_value.
+   - NUNCA lo dejes null si aparece cualquier cifra o número en dólares en el documento o en el nombre de archivo.
 
-3. "contract_type": "cliente", "proveedor" o "interno".
+3. FECHAS Y PLAZO ("start_date", "duration_months", "end_date"):
+   - "start_date": Busca fechas de otorgamiento, suscripción o firma (ej. "11 de febrero de 2021", "15/02/2021", "San Salvador, 11 de febrero de 2021", o la fecha inicial expresada en el texto o anexo). Devuélvela en YYYY-MM-DD.
+   - "duration_months": Plazo en meses (ej. 12, 18, 24, 36, 48). Si dice "un año" es 12, "dos años" es 24, "dieciocho meses" es 18.
+   - "end_date": Calcula sumando duration_months a start_date si no aparece explícitamente. Ej: 2021-02-11 + 18 meses = 2022-08-11.
 
-4. "service_category": "radiocomunicacion", "colocation", "conectividad" u "otro".
+4. "brand":
+   - "datared": Si ofrece Servidor Virtual, Colocation, Data Center, Enlaces de Datos, Internet, Cloud.
+   - "red": Si ofrece Radiocomunicación, Trunking, PTT, Radios.
 
-5. "units_quantity":
-   - Para colocation: Número de U's (unidades de rack) o bastidores.
-   - Para radiocomunicación: Número de terminales / radios.
-   - Si no aplica, null.
+5. "service_category": "radiocomunicacion", "colocation", "conectividad" u "otro".
 
-6. "bandwidth_mbps":
-   - Para enlaces de datos o internet: Ancho de banda en Mbps. Si viene en KB o MB, conviértelo a número en Mbps.
+6. "units_quantity" y "bandwidth_mbps": Extrae número de U's, radios, o Mbps de velocidad si están presentes.
 
-7. "contract_value" y "monthly_fee":
-   - "monthly_fee": Cuota mensual pactada en dólares (USD), sin incluir IVA a menos que sea la única cifra.
-   - "contract_value": MONTO TOTAL del contrato en dólares (USD).
-     CRÍTICO: Si el contrato especifica la cuota mensual y el plazo en meses (ej. $250/mes por 18 meses), el monto total es $250 * 18 = $4,500.00. Si el contrato dice "CUATRO MIL QUINIENTOS DOLARES ($4,500.00)", este es el valor total. Si solo tiene la cuota mensual de $250 y el plazo de 18 meses, calcula el valor total multiplicando cuota mensual * meses.
-
-8. FECHAS Y PLAZO:
-   - "duration_months": Plazo o vigencia expresado en número de meses (ej. 18, 24, 12, 36).
-   - "start_date": Fecha de inicio del contrato en formato YYYY-MM-DD.
-     ATENCIÓN AL CÁLCULO DE FECHA FINAL: A veces la fecha de inicio se menciona al final en el acta notarial o anexo (ej. " San Salvador, 11 de febrero de 2021" o "15 de Febrero de 2021").
-   - "end_date": Fecha de finalización en formato YYYY-MM-DD.
-     REGLA DE CÁLCULO IMPORTANTE: Si el contrato establece un plazo de N meses (ej. 18 meses) contados a partir de la fecha de inicio (ej. 15 de febrero de 2021), calcula la fecha de vencimiento sumando exactamente esos meses.
-     Ejemplo: 15 de febrero de 2021 + 18 meses = 15 de agosto de 2022 (o fin de mes según aplique). Si el plazo es 12 meses desde 1 de marzo de 2024 -> 1 de marzo de 2025.
-
-9. "summary": Un resumen claro de 2-3 oraciones explicando el objeto del contrato y los servicios contratados.
-
-10. "key_terms": Términos relevantes (SLA de disponibilidad como 99.74%, penalidades, renovación automática, mantenimiento, custodia, etc.).
+7. "title": Asigna un título representativo, por ejemplo "Contrato de Servicios - " + Nombre del Cliente.
 
 Devuelve UNICAMENTE un objeto JSON válido con la siguiente estructura:
 {
@@ -77,8 +65,8 @@ Devuelve UNICAMENTE un objeto JSON válido con la siguiente estructura:
   "aliases": ["variante 1", "variante 2"],
   "contract_type": "cliente",
   "brand": "datared" | "red",
-  "title": "Título sugerido para el contrato",
-  "service_name": "Descripción breve del servicio",
+  "title": "Título del contrato",
+  "service_name": "Descripción del servicio",
   "service_category": "colocation" | "conectividad" | "radiocomunicacion" | "otro",
   "units_quantity": number | null,
   "bandwidth_mbps": number | null,
@@ -88,11 +76,11 @@ Devuelve UNICAMENTE un objeto JSON válido con la siguiente estructura:
   "duration_months": number | null,
   "start_date": "YYYY-MM-DD" | null,
   "end_date": "YYYY-MM-DD" | null,
-  "summary": "Resumen...",
+  "summary": "Resumen claro de 2 oraciones",
   "key_terms": "Términos..."
 }
 
-TEXTO DEL CONTRATO (o Nombre de Archivo):
+TEXTO DEL CONTRATO O NOMBRE DE ARCHIVO:
 ${textToAnalyze ? textToAnalyze.slice(0, 30000) : filename || "Sin contenido"}
 `;
 

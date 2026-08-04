@@ -130,12 +130,27 @@ export async function analyzeContractText(
       data.duration_months = parseInt((data.duration_months as string).replace(/[^0-9]/g, ''), 10) || null;
     }
 
-    // Client normalization
-    if (data.client_name || data.raw_client_name) {
-      const nameToMatch = data.client_name || data.raw_client_name || '';
-      const { canonicalName } = findCanonicalClient(nameToMatch);
-      data.client_name = canonicalName;
+    // Heuristic supplementation if Gemini missed specific fields
+    if (!data.start_date) {
+      const dates = extractDatesFromText(text, filename);
+      if (dates.start_date) data.start_date = dates.start_date;
+      if (!data.end_date && dates.end_date) data.end_date = dates.end_date;
     }
+
+    if (!data.duration_months) {
+      data.duration_months = extractDurationFromText(text);
+    }
+
+    if (!data.monthly_fee || !data.contract_value) {
+      const amounts = extractAmountsFromText(text);
+      if (!data.monthly_fee && amounts.monthly_fee) data.monthly_fee = amounts.monthly_fee;
+      if (!data.contract_value && amounts.contract_value) data.contract_value = amounts.contract_value;
+    }
+
+    // Client normalization & fallback
+    const rawName = data.client_name || data.raw_client_name || filename.replace(/\.[^/.]+$/, '').replace(/_/g, ' ');
+    const { canonicalName } = findCanonicalClient(rawName);
+    data.client_name = canonicalName || rawName;
 
     // Date / duration calculation check
     if (data.start_date && data.duration_months && !data.end_date) {
@@ -145,6 +160,10 @@ export async function analyzeContractText(
     // Value calculation if monthly fee & duration exist
     if (data.monthly_fee && data.duration_months && !data.contract_value) {
       data.contract_value = Math.round(data.monthly_fee * data.duration_months * 100) / 100;
+    }
+
+    if (data.contract_value && data.duration_months && !data.monthly_fee && data.duration_months > 0) {
+      data.monthly_fee = Math.round((data.contract_value / data.duration_months) * 100) / 100;
     }
 
     return data;
@@ -169,6 +188,110 @@ export function calculateEndDate(startDateStr: string, months: number): string {
   }
 }
 
+const MONTH_MAP: Record<string, string> = {
+  enero: '01', febrero: '02', marzo: '03', abril: '04',
+  mayo: '05', junio: '06', julio: '07', agosto: '08',
+  septiembre: '09', octubre: '10', noviembre: '11', diciembre: '12'
+};
+
+export function extractDatesFromText(text: string, filename: string = ''): { start_date: string | null; end_date: string | null } {
+  const combined = (text + ' ' + filename).toLowerCase();
+  
+  // Spanish date pattern: "11 de febrero de 2021" or "11 de febrero del 2021"
+  const spanishDateRegex = /(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de[l\s]+(\d{4})/gi;
+  const matches = [...combined.matchAll(spanishDateRegex)];
+  const datesFound: string[] = [];
+
+  for (const match of matches) {
+    const day = match[1].padStart(2, '0');
+    const month = MONTH_MAP[match[2].toLowerCase()] || '01';
+    const year = match[3];
+    datesFound.push(`${year}-${month}-${day}`);
+  }
+
+  // ISO pattern: 2021-02-11
+  const isoRegex = /\b(20[1-3][0-9])[-/](0[1-9]|1[0-2])[-/](0[1-9]|[12][0-9]|3[01])\b/g;
+  for (const match of combined.matchAll(isoRegex)) {
+    datesFound.push(`${match[1]}-${match[2]}-${match[3]}`);
+  }
+
+  // DMY pattern: 11/02/2021
+  const dmyRegex = /\b(0[1-9]|[12][0-9]|3[01])[-/](0[1-9]|1[0-2])[-/](20[1-3][0-9])\b/g;
+  for (const match of combined.matchAll(dmyRegex)) {
+    datesFound.push(`${match[3]}-${match[2]}-${match[1]}`);
+  }
+
+  if (datesFound.length > 0) {
+    datesFound.sort();
+    return {
+      start_date: datesFound[0],
+      end_date: datesFound.length > 1 ? datesFound[datesFound.length - 1] : null,
+    };
+  }
+
+  return { start_date: null, end_date: null };
+}
+
+export function extractAmountsFromText(text: string): { monthly_fee: number | null; contract_value: number | null } {
+  let monthly_fee: number | null = null;
+  let contract_value: number | null = null;
+
+  // Monthly regex: "cuota de $250.00", "canon mensual $1,200", "$250 mensuales"
+  const monthlyRegex = /(?:cuota|canon|pago|alquiler|monto|monto mensual|cuota mensual|precio|tarifa)\s*(?:mensual)?\s*(?:de)?\s*\$\s*([\d,]+(?:\.\d{1,2})?)/gi;
+  const monthlyMatch = monthlyRegex.exec(text);
+  if (monthlyMatch && monthlyMatch[1]) {
+    const val = parseFloat(monthlyMatch[1].replace(/,/g, ''));
+    if (!isNaN(val) && val > 0) monthly_fee = val;
+  }
+
+  // Total regex: "monto total de $4,500.00", "valor $4,500"
+  const totalRegex = /(?:monto total|valor total|suma total|precio total)\s*(?:de)?\s*\$\s*([\d,]+(?:\.\d{1,2})?)/gi;
+  const totalMatch = totalRegex.exec(text);
+  if (totalMatch && totalMatch[1]) {
+    const val = parseFloat(totalMatch[1].replace(/,/g, ''));
+    if (!isNaN(val) && val > 0) contract_value = val;
+  }
+
+  // General Dollar regex fallback
+  const allDollarMatches = text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)/g);
+  if (allDollarMatches && allDollarMatches.length > 0) {
+    const nums = allDollarMatches
+      .map(s => parseFloat(s.replace('$', '').replace(/,/g, '').trim()))
+      .filter(n => !isNaN(n) && n > 0);
+
+    if (nums.length > 0) {
+      if (!contract_value) contract_value = Math.max(...nums);
+      if (!monthly_fee && nums.length > 1) {
+        const minVal = Math.min(...nums);
+        if (minVal < (contract_value || 0)) {
+          monthly_fee = minVal;
+        }
+      }
+    }
+  }
+
+  return { monthly_fee, contract_value };
+}
+
+export function extractDurationFromText(text: string): number | null {
+  const clean = text.toLowerCase();
+
+  const numMonths = clean.match(/(\d{1,2})\s*meses/i);
+  if (numMonths && numMonths[1]) {
+    const months = parseInt(numMonths[1], 10);
+    if (months > 0 && months <= 120) return months;
+  }
+
+  if (clean.includes('dieciocho meses') || clean.includes('18 meses')) return 18;
+  if (clean.includes('veinticuatro meses') || clean.includes('24 meses') || clean.includes('dos años')) return 24;
+  if (clean.includes('doce meses') || clean.includes('12 meses') || clean.includes('un año')) return 12;
+  if (clean.includes('treinta y seis meses') || clean.includes('36 meses') || clean.includes('tres años')) return 36;
+  if (clean.includes('cuarenta y ocho meses') || clean.includes('48 meses') || clean.includes('cuatro años')) return 48;
+  if (clean.includes('sesenta meses') || clean.includes('60 meses') || clean.includes('cinco años')) return 60;
+
+  return null;
+}
+
 function heuristicFallbackExtraction(text: string, filename: string): ExtractionResult {
   const clean = text.replace(/\s+/g, ' ');
 
@@ -182,32 +305,31 @@ function heuristicFallbackExtraction(text: string, filename: string): Extraction
   const { canonicalName } = findCanonicalClient(client_name);
 
   // Look for duration
-  let duration_months: number | null = null;
-  const durationMatch = clean.match(/(\d+)\s*meses/i) || clean.match(/(dieciocho|veinticuatro|doce|treinta y seis)\s*\(\d+\)\s*meses/i);
-  if (durationMatch) {
-    if (clean.includes('dieciocho') || clean.includes('18')) duration_months = 18;
-    else if (clean.includes('veinticuatro') || clean.includes('24')) duration_months = 24;
-    else if (clean.includes('doce') || clean.includes('12')) duration_months = 12;
-    else if (clean.includes('treinta y seis') || clean.includes('36')) duration_months = 36;
-  }
+  const duration_months = extractDurationFromText(text);
 
   // Look for values
-  let contract_value: number | null = null;
-  let monthly_fee: number | null = null;
+  const { monthly_fee, contract_value } = extractAmountsFromText(text);
 
-  const valueMatch = clean.match(/\$\s*([\d,]+(?:\.\d{2})?)/g);
-  if (valueMatch && valueMatch.length > 0) {
-    const numbers = valueMatch.map(v => parseFloat(v.replace('$', '').replace(/,/g, ''))).filter(n => !isNaN(n));
-    if (numbers.length > 0) {
-      contract_value = Math.max(...numbers);
-      if (numbers.length > 1) {
-        monthly_fee = Math.min(...numbers);
-      }
-    }
-  }
+  // Look for dates
+  const { start_date, end_date } = extractDatesFromText(text, filename);
 
   // Brand detection
   const brand: 'datared' | 'red' = clean.toLowerCase().includes('radiocomunicacion') || clean.toLowerCase().includes(' radio') ? 'red' : 'datared';
+
+  let calculatedEnd = end_date;
+  if (start_date && duration_months && !calculatedEnd) {
+    calculatedEnd = calculateEndDate(start_date, duration_months);
+  }
+
+  let finalContractValue = contract_value;
+  if (monthly_fee && duration_months && !finalContractValue) {
+    finalContractValue = Math.round(monthly_fee * duration_months * 100) / 100;
+  }
+
+  let finalMonthlyFee = monthly_fee;
+  if (finalContractValue && duration_months && !finalMonthlyFee && duration_months > 0) {
+    finalMonthlyFee = Math.round((finalContractValue / duration_months) * 100) / 100;
+  }
 
   return {
     client_name: canonicalName,
@@ -217,8 +339,10 @@ function heuristicFallbackExtraction(text: string, filename: string): Extraction
     contract_type: 'cliente',
     service_category: brand === 'red' ? 'radiocomunicacion' : 'colocation',
     duration_months,
-    contract_value,
-    monthly_fee,
+    contract_value: finalContractValue,
+    monthly_fee: finalMonthlyFee,
+    start_date: start_date || '',
+    end_date: calculatedEnd || '',
     currency: 'USD',
     summary: 'Contrato extraído mediante procesador de documentos.',
     key_terms: 'Revisar cláusulas contractuales e importes asignados.',
