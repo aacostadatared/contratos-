@@ -26,7 +26,7 @@ async function startServer() {
   // API Route for Gemini contract analysis
   app.post("/api/analyze-contract", async (req, res) => {
     try {
-      const { text, filename, fileBase64, mimeType } = req.body;
+      const { text, filename, fileBase64, mimeType, pageImages } = req.body;
       const textToAnalyze = typeof text === "string" ? text : "";
 
       const prompt = `Analiza el documento adjunto (contrato, orden de compra o anexo) o el texto extraído para las empresas de telecomunicaciones DataRed e INTELFON / RED en El Salvador.
@@ -91,7 +91,18 @@ Devuelve UNICAMENTE un objeto JSON válido con esta estructura:
 `;
 
       const contentsParts: any[] = [];
-      if (fileBase64 && typeof fileBase64 === "string") {
+
+      // If page images from PDF rendering are provided, send them as JPEG inlineData
+      if (pageImages && Array.isArray(pageImages) && pageImages.length > 0) {
+        for (const imgBase64 of pageImages) {
+          contentsParts.push({
+            inlineData: {
+              mimeType: "image/jpeg",
+              data: imgBase64,
+            },
+          });
+        }
+      } else if (fileBase64 && typeof fileBase64 === "string") {
         let validMime = mimeType || "application/pdf";
         if (filename && filename.toLowerCase().endsWith(".pdf")) validMime = "application/pdf";
         else if (filename && filename.toLowerCase().endsWith(".png")) validMime = "image/png";

@@ -104,6 +104,56 @@ export async function fileToBase64(file: File): Promise<string> {
   });
 }
 
+export async function renderPdfPagesToJpegs(file: File, maxPages = 4): Promise<string[]> {
+  try {
+    const buffer = await file.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({ data: buffer });
+    const pdf = await loadingTask.promise;
+    const images: string[] = [];
+    const totalPages = pdf.numPages;
+
+    if (totalPages === 0) return [];
+
+    // Select key pages for extraction: 1, 2, 3, and last page
+    const pageIndices = new Set<number>();
+    for (let i = 1; i <= Math.min(totalPages, maxPages); i++) {
+      pageIndices.add(i);
+    }
+    if (totalPages > 1) {
+      pageIndices.add(totalPages);
+    }
+
+    const sortedPages = Array.from(pageIndices).sort((a, b) => a - b);
+
+    for (const pageNum of sortedPages) {
+      try {
+        const page = await pdf.getPage(pageNum);
+        const viewport = page.getViewport({ scale: 1.5 });
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+
+        if (ctx) {
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+          await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+          images.push(base64);
+        }
+      } catch (pErr) {
+        console.warn(`Error renderizando página ${pageNum} de PDF a JPEG:`, pErr);
+      }
+    }
+    return images;
+  } catch (err) {
+    console.warn('Error en renderPdfPagesToJpegs:', err);
+    return [];
+  }
+}
+
 export async function analyzeContractText(
   text: string,
   filename: string,
@@ -115,14 +165,23 @@ export async function analyzeContractText(
   try {
     let fileBase64: string | undefined = undefined;
     let mimeType: string | undefined = undefined;
+    let pageImages: string[] | undefined = undefined;
 
     if (file && file.size <= 25 * 1024 * 1024) {
       try {
-        if (onProgress) onProgress('Procesando documento escaneado/digital con Gemini Vision OCR...');
-        fileBase64 = await fileToBase64(file);
-        mimeType = file.type || (filename.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream');
+        const ext = filename.split('.').pop()?.toLowerCase();
+        if (ext === 'pdf') {
+          if (onProgress) onProgress('Renderizando páginas del PDF con OCR de visión nocturna...');
+          pageImages = await renderPdfPagesToJpegs(file, 4);
+        }
+
+        if (!pageImages || pageImages.length === 0) {
+          if (onProgress) onProgress('Procesando archivo digital con Gemini Vision OCR...');
+          fileBase64 = await fileToBase64(file);
+          mimeType = file.type || (filename.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream');
+        }
       } catch (bErr) {
-        console.warn('Error convirtiendo archivo a base64:', bErr);
+        console.warn('Error convirtiendo/renderizando archivo para visión:', bErr);
       }
     }
 
@@ -134,6 +193,7 @@ export async function analyzeContractText(
         filename,
         fileBase64,
         mimeType,
+        pageImages,
       }),
     });
 
