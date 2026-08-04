@@ -29,54 +29,51 @@ async function startServer() {
       const { text, filename, fileBase64, mimeType, pageImages } = req.body;
       const textToAnalyze = typeof text === "string" ? text : "";
 
-      const prompt = `Analiza el documento adjunto (contrato, orden de compra o anexo) o el texto extraído para las empresas de telecomunicaciones DataRed e INTELFON / RED en El Salvador.
+      const prompt = `Analiza detenidamente el documento adjunto (contrato, orden de compra, anexo o oferta) y/o el texto extraído para las empresas de telecomunicaciones DataRed e INTELFON / RED en El Salvador.
 Nombre del archivo: ${filename || "desconocido"}.
 
-INSTRUCCIONES DE EXTRACCIÓN CRÍTICAS (DEBES LEER TODO EL DOCUMENTO O IMAGEN Y EXTRAER):
-1. "client_name": Identifica el CLIENTE (persona natural o jurídica que recibe el servicio o emite la orden de compra).
-   - Ejemplos: "BANCO DE DESARROLLO DE LA REPÚBLICA DE EL SALVADOR", "BANDESAL", "Ministerio de Hacienda", "Banco Agrícola".
-   - Si el cliente es BANDESAL o variaciones (como "BANCO DE DESARROLLO DE EL SALVADOR"), normalízalo a "BANCO DE DESARROLLO DE LA REPÚBLICA DE EL SALVADOR (BANDESAL)".
-   - Guarda en "raw_client_name" el nombre exacto que aparece.
+INSTRUCCIONES DE EXTRACCIÓN Y NORMALIZACIÓN OBLIGATORIAS:
 
-2. MONTOS ("monthly_fee" y "contract_value"):
-   - "contract_value": MONTO TOTAL O VALOR TOTAL del contrato/orden de compra en USD.
-     * Ejemplo 1: En una Orden de Compra ("ORDEN DE COMPRA DE OBRAS, BIENES, SERVICIOS..."), busca la columna "Valor Total (Iva Incluido)" o "Total USD $". Ej: 16724.00 ($16,724.00).
-     * Ejemplo 2: "monto total de TRECE MIL CUATROCIENTOS CUARENTA DÓLARES (USD $13,440.00)".
-     * Si sólo hay cuota mensual y plazo (ej: $250 x 18 meses), contract_value = 4500.
-   - "monthly_fee": Cuota mensual pactada en USD.
-     * Si el contrato dice "cuota mensual de $250.00", pon 250.
-     * Si la orden de compra indica un valor total de $16,724.00 para un período de 12 meses (ej: 01/01/2024 al 31/12/2024), calcula monthly_fee = 16724 / 12 = 1393.67.
-     * Si indica cuota anual de $13,440.00 para 12 meses, la cuota mensual es 13,440 / 12 = 1120.00.
-   - REGLA: EXTRAE SIEMPRE los valores numéricos de cualquier cifra en dólares que aparezca en el documento.
+1. CLIENTE ("client_name" y "raw_client_name"):
+   - Identifica el cliente o contratante principal.
+   - Si el cliente es BANDESAL (ej: "BANCO DE DESARROLLO DE EL SALVADOR", "BANCO DE DESARROLLO DE LA REPÚBLICA DE EL SALVADOR", "BANDESAL"), normalízalo EXACTAMENTE a: "BANCO DE DESARROLLO DE LA REPÚBLICA DE EL SALVADOR (BANDESAL)".
+   - Si es TELEFÓNICA / MOVISTAR, normalízalo a: "Telefónica Móviles El Salvador, S.A. de C.V.".
+   - Si es SSP / SOCIEDAD DE SEGURIDAD PRIVADA, normalízalo a: "SSP DE EL SALVADOR, S.A. DE C.V.".
+   - Guarda en "raw_client_name" la versión textual exacta que aparece en el documento.
 
-3. FECHAS Y PLAZO ("start_date", "end_date", "duration_months"):
-   - FORMATO OBLIGATORIO: Todas las fechas deben ser "YYYY-MM-DD" estricto.
+2. MONTOS EN USD ("monthly_fee" y "contract_value"):
+   - Lee minuciosamente TODAS las cifras en dólares ($) del documento, tablas de precios, valor total y cuotas mensuales.
+   - "contract_value": MONTO TOTAL O VALOR TOTAL del contrato u orden de compra.
+     * Ejemplo: Si la orden de compra indica "Valor Total (Iva Incluido): $16,724.00" o "Monto Total $13,440.00", pon 16724.00 o 13440.00.
+     * Si no hay monto total explícito, pero hay una cuota mensual de $250.00 por 12 meses, contract_value = 3000.00.
+   - "monthly_fee": CUOTA O CANON MENSUAL en USD.
+     * Ejemplo: Si el monto total es $16,724.00 para un período de 12 meses, calcula monthly_fee = 16724 / 12 = 1393.67.
+     * Ejemplo: Si el monto total es $13,440.00 para 12 meses, calcula monthly_fee = 13440 / 12 = 1120.00.
+     * Si el contrato establece cuota mensual de $614.16, pon 614.16.
+
+3. FECHAS Y DURACIÓN ("start_date", "end_date", "duration_months"):
+   - FORMATO DE FECHA OBLIGATORIO: "YYYY-MM-DD" estricto. (Ejemplo: 2021-01-01).
    - "start_date": Fecha de inicio en YYYY-MM-DD.
-     * Ej: "Del 01 de enero al 31 de diciembre de 2024" -> "2024-01-01".
-     * Ej: "enero de 2021" o "desde el 1/1/2021" -> "2021-01-01".
-     * Ej: "15 de diciembre de 2023" -> "2023-12-15".
+     * Ej: "01 de enero de 2021" -> "2021-01-01".
+     * Ej: "15/12/2023" -> "2023-12-15".
+   - "duration_months": Plazo en meses (ej. 12, 18, 24). Si dice "un año" o "12 meses" pon 12.
    - "end_date": Fecha de vencimiento/finalización en YYYY-MM-DD.
-     * Ej: "31 de diciembre de 2024" -> "2024-12-31".
-     * Si la fecha de inicio es 2021-01-01 y el plazo es de 12 meses, calcula end_date = "2021-12-31".
-   - "duration_months": Plazo en meses (ej. 12, 18, 24). Si va de enero 2021 a enero 2022 o 1 año, son 12 meses.
+     * Si start_date es "2021-01-01" y duration_months es 12, end_date DEBE SER "2021-12-31".
+     * Si start_date es "2024-01-01" y duration_months es 12, end_date DEBE SER "2024-12-31".
 
-4. "brand":
-   - "datared": Si ofrece Colocation, Espacio en Gabinete/Rack (U's), Data Center, Servidores, Arrendamiento de Inmueble para Data Center, Enlaces de Datos, Cloud, Internet Empresarial.
-   - "red": Si ofrece Radiocomunicación Trunking, PTT, Flota de Radios, Terminales, GPS.
+4. MARCA Y CATEGORÍA ("brand" y "service_category"):
+   - "brand": "datared" si es Colocation, Gabinete/Rack (U's), Data Center, Servidores, Arrendamiento de Espacio o Sitio Alterno, Enlaces de Datos, Cloud, Internet. "red" si es Radiocomunicación Trunking, Flota de Radios, Terminales, GPS.
+   - "service_category": "colocation" | "conectividad" | "radiocomunicacion" | "otro".
 
-5. "service_category": "colocation" | "conectividad" | "radiocomunicacion" | "otro".
-
-6. "units_quantity": Número de U's de rack (ej. 42U -> 42), o número de radios/equipos si aplica.
-
-Devuelve UNICAMENTE un objeto JSON válido con esta estructura:
+Devuelve ÚNICAMENTE un objeto JSON estructurado con estas claves:
 {
   "client_name": "Nombre normalizado del cliente",
-  "raw_client_name": "Nombre tal cual aparece",
+  "raw_client_name": "Nombre literal en el documento",
   "aliases": ["BANDESAL", "BANCO DE DESARROLLO DE LA REPUBLICA DE EL SALVADOR"],
   "contract_type": "cliente",
   "brand": "datared" | "red",
-  "title": "Título del contrato / orden",
-  "service_name": "Descripción breve del servicio",
+  "title": "Título del contrato u orden de compra",
+  "service_name": "Servicio contratado",
   "service_category": "colocation" | "conectividad" | "radiocomunicacion" | "otro",
   "units_quantity": number | null,
   "bandwidth_mbps": number | null,
@@ -86,15 +83,25 @@ Devuelve UNICAMENTE un objeto JSON válido con esta estructura:
   "duration_months": number | null,
   "start_date": "YYYY-MM-DD" | null,
   "end_date": "YYYY-MM-DD" | null,
-  "summary": "Resumen claro del objeto del contrato",
-  "key_terms": "Términos..."
+  "summary": "Resumen claro del contrato y servicio",
+  "key_terms": "Términos relevantes"
 }
 `;
 
       const contentsParts: any[] = [];
 
-      // 1. Include raw file if available (Gemini 2.5 natively supports PDF and image binaries)
-      if (fileBase64 && typeof fileBase64 === "string") {
+      // Include either rendered page images OR raw fileBase64 (never both, to prevent exceeding payload limits)
+      if (pageImages && Array.isArray(pageImages) && pageImages.length > 0) {
+        const maxImgs = pageImages.slice(0, 6);
+        for (const imgBase64 of maxImgs) {
+          contentsParts.push({
+            inlineData: {
+              mimeType: "image/jpeg",
+              data: imgBase64,
+            },
+          });
+        }
+      } else if (fileBase64 && typeof fileBase64 === "string" && fileBase64.length < 15000000) {
         let validMime = mimeType || "application/pdf";
         if (filename && filename.toLowerCase().endsWith(".pdf")) validMime = "application/pdf";
         else if (filename && filename.toLowerCase().endsWith(".png")) validMime = "image/png";
@@ -106,18 +113,6 @@ Devuelve UNICAMENTE un objeto JSON válido con esta estructura:
             data: fileBase64,
           },
         });
-      }
-
-      // 2. Also include rendered page images if available (e.g. extracted PDF pages)
-      if (pageImages && Array.isArray(pageImages) && pageImages.length > 0) {
-        for (const imgBase64 of pageImages) {
-          contentsParts.push({
-            inlineData: {
-              mimeType: "image/jpeg",
-              data: imgBase64,
-            },
-          });
-        }
       }
 
       contentsParts.push({
@@ -133,15 +128,30 @@ Devuelve UNICAMENTE un objeto JSON válido con esta estructura:
             responseMimeType: "application/json",
           },
         });
-      } catch (gemErr) {
-        console.warn("gemini-2.5-flash failed, retrying with gemini-2.0-flash:", gemErr);
-        response = await ai.models.generateContent({
-          model: "gemini-2.0-flash",
-          contents: contentsParts,
-          config: {
-            responseMimeType: "application/json",
-          },
-        });
+      } catch (gemErr: any) {
+        console.warn("Reintentando con gemini-2.0-flash debido a:", gemErr?.message || gemErr);
+        try {
+          response = await ai.models.generateContent({
+            model: "gemini-2.0-flash",
+            contents: contentsParts,
+            config: {
+              responseMimeType: "application/json",
+            },
+          });
+        } catch (gemErr2: any) {
+          console.warn("Reintentando con texto plano debido a:", gemErr2?.message || gemErr2);
+          response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: [
+              {
+                text: prompt + (textToAnalyze ? `\n\nTEXTO EXTRAÍDO DEL DOCUMENTO:\n${textToAnalyze.slice(0, 30000)}` : ""),
+              },
+            ],
+            config: {
+              responseMimeType: "application/json",
+            },
+          });
+        }
       }
 
       const rawText = response.text || "{}";

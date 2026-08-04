@@ -482,36 +482,47 @@ export function extractAmountsFromText(text: string): { monthly_fee: number | nu
   let monthly_fee: number | null = null;
   let contract_value: number | null = null;
 
-  // Total regex: "monto total de $13,440.00", "valor total (iva incluido) 16,724.00", "total usd $: 16,724.00"
-  const totalRegex = /(?:monto total|valor total|suma total|precio total|total usd|monto global)\s*(?:\(iva incluido\))?\s*(?:de)?\s*(?::)?\s*(?:USD)?\s*\$?\s*([\d,]+(?:\.\d{1,2})?)/gi;
+  // 1. Explicit Total regex matches
+  const totalRegex = /(?:monto total|valor total|suma total|precio total|total usd|monto global|valor acumulado|suma de)\s*(?:\([^\)]+\))?\s*(?:de|por|es de)?\s*(?::)?\s*(?:USD|US\$|\$)?\s*\$?\s*([\d,]{2,}(?:\.\d{1,2})?)/gi;
   const totalMatch = totalRegex.exec(text);
   if (totalMatch && totalMatch[1]) {
     const val = parseFloat(totalMatch[1].replace(/,/g, ''));
     if (!isNaN(val) && val > 0) contract_value = val;
   }
 
-  // Monthly regex: "cuota de $250.00", "canon mensual $1,200", "$250 mensuales"
-  const monthlyRegex = /(?:cuota|canon|pago|alquiler|monto|monto mensual|cuota mensual|precio|tarifa)\s*(?:mensual)?\s*(?:de)?\s*\$\s*([\d,]+(?:\.\d{1,2})?)/gi;
+  // 2. Explicit Monthly regex matches
+  const monthlyRegex = /(?:cuota|canon|pago|alquiler|monto mensual|cuota mensual|mensualidad|tarifa mensual)\s*(?:mensual)?\s*(?:de|por|es de)?\s*(?::)?\s*(?:USD|US\$|\$)?\s*\$?\s*([\d,]{2,}(?:\.\d{1,2})?)/gi;
   const monthlyMatch = monthlyRegex.exec(text);
   if (monthlyMatch && monthlyMatch[1]) {
     const val = parseFloat(monthlyMatch[1].replace(/,/g, ''));
     if (!isNaN(val) && val > 0) monthly_fee = val;
   }
 
-  // General Dollar regex fallback
-  const allDollarMatches = text.match(/(?:USD\s*\$|\$)\s*([\d,]+\.\d{2})/gi) || text.match(/([\d,]{2,}\.\d{2})/g);
-  if (allDollarMatches && allDollarMatches.length > 0) {
-    const nums = allDollarMatches
-      .map(s => parseFloat(s.replace(/USD|\$|,/gi, '').trim()))
-      .filter(n => !isNaN(n) && n > 10);
+  // 3. Extract all dollar patterns ($XX,XXX.XX or USD XX,XXX.XX)
+  const dollarRegex = /(?:USD\s*\$|US\$\s*|\$\s*)([\d,]{3,}\.\d{2}|[\d,]{3,})/gi;
+  const matches = Array.from(text.matchAll(dollarRegex));
+  const numbers: number[] = [];
 
-    if (nums.length > 0) {
-      if (!contract_value) contract_value = Math.max(...nums);
-      if (!monthly_fee && nums.length > 1) {
-        const minVal = Math.min(...nums);
-        if (minVal < (contract_value || 0)) {
-          monthly_fee = minVal;
-        }
+  for (const m of matches) {
+    if (m[1]) {
+      const num = parseFloat(m[1].replace(/,/g, ''));
+      if (!isNaN(num) && num > 10) {
+        numbers.push(num);
+      }
+    }
+  }
+
+  if (numbers.length > 0) {
+    const maxVal = Math.max(...numbers);
+    if (!contract_value && maxVal > 50) {
+      contract_value = maxVal;
+    }
+
+    if (!monthly_fee && numbers.length > 1) {
+      // Find a candidate monthly fee smaller than contract_value
+      const lowerVals = numbers.filter(n => n < (contract_value || Infinity));
+      if (lowerVals.length > 0) {
+        monthly_fee = Math.min(...lowerVals);
       }
     }
   }
