@@ -1,0 +1,6 @@
+{
+  "name": "Gestor de Contratos Intelfon - DataRed & RED",
+  "description": "Sistema de gestión y extracción inteligente de contratos con IA para DataRed y RED, con carga masiva de PDFs, normalización de clientes y carpetas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
