@@ -92,17 +92,8 @@ Devuelve UNICAMENTE un objeto JSON válido con esta estructura:
 
       const contentsParts: any[] = [];
 
-      // If page images from PDF rendering are provided, send them as JPEG inlineData
-      if (pageImages && Array.isArray(pageImages) && pageImages.length > 0) {
-        for (const imgBase64 of pageImages) {
-          contentsParts.push({
-            inlineData: {
-              mimeType: "image/jpeg",
-              data: imgBase64,
-            },
-          });
-        }
-      } else if (fileBase64 && typeof fileBase64 === "string") {
+      // 1. Include raw file if available (Gemini 2.5 natively supports PDF and image binaries)
+      if (fileBase64 && typeof fileBase64 === "string") {
         let validMime = mimeType || "application/pdf";
         if (filename && filename.toLowerCase().endsWith(".pdf")) validMime = "application/pdf";
         else if (filename && filename.toLowerCase().endsWith(".png")) validMime = "image/png";
@@ -116,17 +107,41 @@ Devuelve UNICAMENTE un objeto JSON válido con esta estructura:
         });
       }
 
+      // 2. Also include rendered page images if available (e.g. extracted PDF pages)
+      if (pageImages && Array.isArray(pageImages) && pageImages.length > 0) {
+        for (const imgBase64 of pageImages) {
+          contentsParts.push({
+            inlineData: {
+              mimeType: "image/jpeg",
+              data: imgBase64,
+            },
+          });
+        }
+      }
+
       contentsParts.push({
         text: prompt + (textToAnalyze ? `\n\nTEXTO EXTRAÍDO DEL DOCUMENTO:\n${textToAnalyze.slice(0, 30000)}` : ""),
       });
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.6-flash",
-        contents: contentsParts,
-        config: {
-          responseMimeType: "application/json",
-        },
-      });
+      let response;
+      try {
+        response = await ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: contentsParts,
+          config: {
+            responseMimeType: "application/json",
+          },
+        });
+      } catch (gemErr) {
+        console.warn("gemini-2.5-flash failed, retrying with gemini-2.0-flash:", gemErr);
+        response = await ai.models.generateContent({
+          model: "gemini-2.0-flash",
+          contents: contentsParts,
+          config: {
+            responseMimeType: "application/json",
+          },
+        });
+      }
 
       const rawText = response.text || "{}";
       const cleanText = rawText.replace(/```json|```/g, "").trim();

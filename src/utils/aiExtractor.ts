@@ -105,7 +105,7 @@ export async function fileToBase64(file: File): Promise<string> {
   });
 }
 
-export async function renderPdfPagesToJpegs(file: File, maxPages = 5): Promise<string[]> {
+export async function renderPdfPagesToJpegs(file: File, maxPages = 8): Promise<string[]> {
   try {
     const buffer = await file.arrayBuffer();
     const ver = pdfjsLib.version || '6.2.108';
@@ -120,16 +120,20 @@ export async function renderPdfPagesToJpegs(file: File, maxPages = 5): Promise<s
 
     if (totalPages === 0) return [];
 
-    // Select key pages for extraction: 1, 2, 3, 4, and last page
     const pageIndices = new Set<number>();
-    for (let i = 1; i <= Math.min(totalPages, maxPages); i++) {
-      pageIndices.add(i);
-    }
-    if (totalPages > 1) {
+    if (totalPages <= 8) {
+      for (let i = 1; i <= totalPages; i++) pageIndices.add(i);
+    } else {
+      // Key pages: first 5 pages, pages 8 & 9, and the last 2 pages
+      for (let i = 1; i <= Math.min(5, totalPages); i++) pageIndices.add(i);
+      if (totalPages >= 8) pageIndices.add(8);
+      if (totalPages >= 9) pageIndices.add(9);
+      if (totalPages >= 12) pageIndices.add(12);
+      pageIndices.add(totalPages - 1);
       pageIndices.add(totalPages);
     }
 
-    const sortedPages = Array.from(pageIndices).sort((a, b) => a - b);
+    const sortedPages = Array.from(pageIndices).filter(p => p >= 1 && p <= totalPages).sort((a, b) => a - b);
 
     for (const pageNum of sortedPages) {
       try {
@@ -175,20 +179,16 @@ export async function analyzeContractText(
 
     if (file && file.size <= 25 * 1024 * 1024) {
       try {
+        fileBase64 = await fileToBase64(file);
+        mimeType = file.type || (filename.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream');
+
         const ext = filename.split('.').pop()?.toLowerCase() || '';
         if (ext === 'pdf') {
-          if (onProgress) onProgress('Renderizando páginas del PDF para visión nocturna IA...');
-          pageImages = await renderPdfPagesToJpegs(file, 5);
+          if (onProgress) onProgress('Renderizando páginas de PDF para Visión IA...');
+          pageImages = await renderPdfPagesToJpegs(file, 8);
         } else if (['jpg', 'jpeg', 'png', 'webp'].includes(ext)) {
           if (onProgress) onProgress('Procesando imagen con Visión IA...');
-          const b64 = await fileToBase64(file);
-          pageImages = [b64];
-        }
-
-        if (!pageImages || pageImages.length === 0) {
-          if (onProgress) onProgress('Procesando archivo digital con Gemini OCR...');
-          fileBase64 = await fileToBase64(file);
-          mimeType = file.type || (filename.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream');
+          pageImages = [fileBase64];
         }
       } catch (bErr) {
         console.warn('Error convirtiendo/renderizando archivo para visión:', bErr);
