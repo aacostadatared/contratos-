@@ -232,11 +232,15 @@ export async function analyzeContractText(
       data.duration_months = parseInt((data.duration_months as string).replace(/[^0-9]/g, ''), 10) || null;
     }
 
+    // Clean date strings to ISO YYYY-MM-DD
+    data.start_date = formatToIsoDate(data.start_date);
+    data.end_date = formatToIsoDate(data.end_date);
+
     // Heuristic supplementation if Gemini missed specific fields
     if (!data.start_date) {
       const dates = extractDatesFromText(text, filename);
-      if (dates.start_date) data.start_date = dates.start_date;
-      if (!data.end_date && dates.end_date) data.end_date = dates.end_date;
+      if (dates.start_date) data.start_date = formatToIsoDate(dates.start_date);
+      if (!data.end_date && dates.end_date) data.end_date = formatToIsoDate(dates.end_date);
     }
 
     if (!data.duration_months) {
@@ -276,15 +280,94 @@ export async function analyzeContractText(
   }
 }
 
-export function calculateEndDate(startDateStr: string, months: number): string {
+export function formatToIsoDate(dateStr: string | null | undefined): string {
+  if (!dateStr || typeof dateStr !== 'string') return '';
+  const clean = dateStr.trim();
+  if (!clean) return '';
+
+  // Already YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+    return clean;
+  }
+
+  // YYYY/MM/DD
+  if (/^\d{4}\/\d{2}\/\d{2}$/.test(clean)) {
+    return clean.replace(/\//g, '-');
+  }
+
+  // DD/MM/YYYY or DD-MM-YYYY
+  const dmyMatch = clean.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (dmyMatch) {
+    const day = dmyMatch[1].padStart(2, '0');
+    const month = dmyMatch[2].padStart(2, '0');
+    const year = dmyMatch[3];
+    return `${year}-${month}-${day}`;
+  }
+
+  // YYYY-M-D or YYYY/M/D
+  const ymdMatch = clean.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (ymdMatch) {
+    const year = ymdMatch[1];
+    const month = ymdMatch[2].padStart(2, '0');
+    const day = ymdMatch[3].padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  // Spanish text: "1 de enero de 2021" or "01 de enero de 2021" or "enero 2021"
+  const MONTHS: Record<string, string> = {
+    enero: '01', febrero: '02', marzo: '03', abril: '04', mayo: '05', junio: '06',
+    julio: '07', agosto: '08', septiembre: '09', octubre: '10', noviembre: '11', diciembre: '12'
+  };
+
+  const lower = clean.toLowerCase();
+  const spanishMatch = lower.match(/(?:(\d{1,2}|uno|primero|treinta y uno)\s+de\s+)?(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(?:de\s+|del\s+)?(\d{4})/);
+  if (spanishMatch) {
+    let dayStr = spanishMatch[1];
+    if (!dayStr || dayStr === 'uno' || dayStr === 'primero') dayStr = '01';
+    else if (dayStr === 'treinta y uno') dayStr = '31';
+    const day = dayStr.padStart(2, '0');
+    const month = MONTHS[spanishMatch[2]] || '01';
+    const year = spanishMatch[3];
+    return `${year}-${month}-${day}`;
+  }
+
+  // JS Date fallback
   try {
-    const startDate = new Date(startDateStr + 'T00:00:00');
-    if (isNaN(startDate.getTime())) return '';
+    const d = new Date(clean);
+    if (!isNaN(d.getTime())) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+  } catch {
+    // ignore
+  }
 
-    const endDate = new Date(startDate);
-    endDate.setMonth(endDate.getMonth() + months);
+  return '';
+}
 
-    return endDate.toISOString().split('T')[0];
+export function calculateEndDate(startDateStr: string, months: number): string {
+  const isoStart = formatToIsoDate(startDateStr);
+  if (!isoStart || !months || months <= 0) return '';
+  try {
+    const parts = isoStart.split('-');
+    const year = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10) - 1;
+    const day = parseInt(parts[2], 10);
+
+    const date = new Date(year, month, day);
+    date.setMonth(date.getMonth() + months);
+
+    // Subtract 1 day for inclusive end date (e.g. 2021-01-01 to 2021-12-31 for 12 months)
+    if (day === 1) {
+      date.setDate(date.getDate() - 1);
+    }
+
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   } catch {
     return '';
   }

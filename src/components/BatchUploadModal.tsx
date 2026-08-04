@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Contract, ExtractionResult } from '../types';
-import { extractTextFromFile, analyzeContractText, calculateEndDate } from '../utils/aiExtractor';
+import { extractTextFromFile, analyzeContractText, calculateEndDate, formatToIsoDate } from '../utils/aiExtractor';
 import { Upload, FileText, CheckCircle2, AlertCircle, Sparkles, X, Loader2, Save, Trash2, Calendar, DollarSign, Building, Users } from 'lucide-react';
 
 interface BatchUploadModalProps {
@@ -96,8 +96,13 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
           }
         }
 
-        if (('start_date' in updates || 'duration_months' in updates) && updated.start_date && updated.duration_months) {
-          updated.end_date = calculateEndDate(updated.start_date, updated.duration_months);
+        if (('start_date' in updates || 'duration_months' in updates)) {
+          if (updated.start_date) {
+            updated.start_date = formatToIsoDate(updated.start_date);
+          }
+          if (updated.start_date && updated.duration_months) {
+            updated.end_date = calculateEndDate(updated.start_date, updated.duration_months);
+          }
         }
 
         return updated;
@@ -139,6 +144,10 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
           prev.map((it) => {
             if (it.id !== item.id) return it;
             const derivedClient = extraction.client_name || it.client_name || 'Cliente';
+            const startDate = formatToIsoDate(extraction.start_date);
+            const duration = extraction.duration_months ?? null;
+            const endDate = formatToIsoDate(extraction.end_date) || (startDate && duration ? calculateEndDate(startDate, duration) : '');
+
             return {
               ...it,
               status: 'analyzed',
@@ -150,9 +159,9 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
               service_category: extraction.service_category || 'colocation',
               monthly_fee: extraction.monthly_fee ?? null,
               contract_value: extraction.contract_value ?? null,
-              duration_months: extraction.duration_months ?? null,
-              start_date: extraction.start_date || '',
-              end_date: extraction.end_date || '',
+              duration_months: duration,
+              start_date: startDate,
+              end_date: endDate,
               summary: extraction.summary || 'Resumen extraído de documento',
               key_terms: extraction.key_terms || '',
             };

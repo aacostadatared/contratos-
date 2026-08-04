@@ -79,6 +79,22 @@ export const INITIAL_CLIENT_PROFILES: ClientProfile[] = [
     contact_person: 'Gerencia Operaciones',
     email: 'contacto@ssp.com.sv',
     phone: '2250-9000'
+  },
+  {
+    id: 'client-telefonica',
+    canonical_name: 'Telefónica Móviles El Salvador, S.A. de C.V.',
+    aliases: [
+      'TELEFONICA',
+      'TELEFÓNICA',
+      'TELEFONICA MOVILES',
+      'TELEFÓNICA MÓVILES EL SALVADOR',
+      'TELEFONIcA vIÓvILES EL SALVADOR, SOcTEDAD ANóN',
+      'TELEFONIcA vIÓvILES EL SALVADOR',
+      'TELEFONICA MOVILES EL SALVADOR, SOCIEDAD ANONIMA'
+    ],
+    contact_person: 'Gerencia de Compras / Redes',
+    email: 'proveedores@telefonica.com.sv',
+    phone: '2244-0000'
   }
 ];
 

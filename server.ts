@@ -50,14 +50,15 @@ INSTRUCCIONES DE EXTRACCIÓN CRÍTICAS (DEBES LEER TODO EL DOCUMENTO O IMAGEN Y 
    - REGLA: EXTRAE SIEMPRE los valores numéricos de cualquier cifra en dólares que aparezca en el documento.
 
 3. FECHAS Y PLAZO ("start_date", "end_date", "duration_months"):
+   - FORMATO OBLIGATORIO: Todas las fechas deben ser "YYYY-MM-DD" estricto.
    - "start_date": Fecha de inicio en YYYY-MM-DD.
      * Ej: "Del 01 de enero al 31 de diciembre de 2024" -> "2024-01-01".
-     * Ej: "desde el día uno enero de dos mil veintiuno..." -> "2021-01-01".
-     * Ej: "15 de Diciembre de 2023" o fecha del contrato/orden.
+     * Ej: "enero de 2021" o "desde el 1/1/2021" -> "2021-01-01".
+     * Ej: "15 de diciembre de 2023" -> "2023-12-15".
    - "end_date": Fecha de vencimiento/finalización en YYYY-MM-DD.
      * Ej: "31 de diciembre de 2024" -> "2024-12-31".
-     * Ej: "treinta y uno de diciembre de dos mil veintiuno" -> "2021-12-31".
-   - "duration_months": Plazo en meses (ej. 12, 18, 24). Si va de 2024-01-01 a 2024-12-31, son 12 meses.
+     * Si la fecha de inicio es 2021-01-01 y el plazo es de 12 meses, calcula end_date = "2021-12-31".
+   - "duration_months": Plazo en meses (ej. 12, 18, 24). Si va de enero 2021 a enero 2022 o 1 año, son 12 meses.
 
 4. "brand":
    - "datared": Si ofrece Colocation, Espacio en Gabinete/Rack (U's), Data Center, Servidores, Arrendamiento de Inmueble para Data Center, Enlaces de Datos, Cloud, Internet Empresarial.
